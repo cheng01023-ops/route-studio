@@ -1,0 +1,9 @@
+定位工具 App 图标
+
+生成方式：内置 image_gen.imagegen，透明背景。
+风格：深青绿玻璃底、浅色路线、立体定位标记，无文字。
+原始素材：定位工具图标.png（1254 × 1254，保留生成的 alpha）。
+App 资源：AppIcon.icns（16–1024 像素尺寸及 Retina 版本）。
+
+最终提示词：
+Use case: stylized-concept. Asset type: finished macOS application icon, 1024 x 1024 PNG, transparent background outside the icon. Create one exceptionally polished premium icon for a personal route-and-location Mac utility called Route Studio (do not render any text). A large centered macOS rounded-square tile with a deep midnight teal to rich emerald gradient, slightly dimensional satin-glass surface, restrained beveled rim, soft top-left studio light. Within the tile, one elegant continuous luminous ivory / pale mint route ribbon forms a simple curved running-route path, with a small circular start node and a beautifully sculpted turquoise location pin at its endpoint. The route and pin must read as one coherent clear symbol at small desktop size. Gentle depth and precise material highlights, jewel-like teal glass pin with a bright circular inset, fine soft shadow, sophisticated clean geometry, spacious balanced composition. Tile occupies about 85% of square canvas with rounded corners; keep a truly transparent perimeter and a restrained natural drop shadow. Straight-on orthographic composition, no perspective tilt. The result should look like a real crafted Mac app icon, crisp and tasteful, suitable for Finder and Dock. No letters, numbers, words, watermark, map grids, roads in a city, screenshots, UI frames, busy ornament or extra floating objects.

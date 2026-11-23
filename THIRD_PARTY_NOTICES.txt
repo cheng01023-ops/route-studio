@@ -1,0 +1,43 @@
+Route Studio third-party notices
+
+Route Studio's own source is licensed under GPL-3.0-or-later. See LICENSE.
+Third-party components retain their own licenses. The project's license does not
+replace upstream license notices or exceptions.
+
+CPython runtime used for the existing macOS package: Python 3.14.7.
+The complete upstream license is reproduced in:
+  Licenses/Python-3.14.7-LICENSE.txt
+Verified upstream source tag:
+  https://github.com/python/cpython/tree/v3.14.7
+Verified license source:
+  https://raw.githubusercontent.com/python/cpython/v3.14.7/LICENSE
+This project does not modify CPython source code. PyInstaller packages the
+runtime and may adjust binary loading paths. Rebuilds with a different Python
+version should retain that version's upstream license notices.
+
+pymobiledevice3 11.63.1: upstream metadata declares GPL-3.0-or-later.
+  https://github.com/doronz88/pymobiledevice3
+  https://pypi.org/project/pymobiledevice3/11.63.1/
+The versioned source download URL and checksum are recorded in
+  docs/THIRD_PARTY_SOURCES.md
+
+PyInstaller 6.22.3: upstream metadata declares GPLv2-or-later with a special
+exception permitting distribution of non-free programs produced by PyInstaller.
+Retain the upstream COPYING.txt and its Bootloader Exception when distributing
+the packaged bootloader. See the exact upstream terms, not this summary.
+  https://pyinstaller.org/
+  https://pypi.org/project/pyinstaller/6.22.3/
+
+Coordinate conversion formulas are adapted from googollee/eviltransform.
+The upstream BSD-2-Clause notice is reproduced in:
+  Licenses/eviltransform.txt
+  https://github.com/googollee/eviltransform
+The original adaptation did not record an upstream commit identifier.
+
+requirements-lock.txt records the exact Python build-environment versions.
+docs/THIRD_PARTY_SOURCES.md lists their verified PyPI metadata declarations and
+source archives, including GPL/LGPL components. Unknown license metadata is
+explicitly marked and must be checked against the upstream source archive.
+The list covers the locked environment; it does not assert that every package
+is included in every executable. The build copies installed package notices
+into the application's Contents/Resources/Licenses directory.
