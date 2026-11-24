@@ -12,6 +12,7 @@ import time
 from contextlib import AsyncExitStack
 
 from route_engine import PlaybackClock, Point, Route
+from device_lease import DeviceLease, ddi_preparation_lease, normalize_serial
 
 
 def emit(event: str, **data):
@@ -25,6 +26,7 @@ class Bridge:
         self.location = None
         self.lockdown = None
         self.serial = None
+        self.lease = None
         self.affected_serial = None
         self.simulated = False
         self.uncertain = False
@@ -43,7 +45,8 @@ class Bridge:
     def status(self, state, message):
         self.state = state
         self.emit("status", state=state, message=message, mode=self.mode, simulated=self.simulated,
-                  uncertain=self.uncertain, connected=self.location is not None)
+                  uncertain=self.uncertain, connected=self.location is not None,
+                  serial=self.serial, affectedSerial=self.affected_serial)
 
     async def scan(self):
         from pymobiledevice3.usbmux import list_devices
@@ -73,6 +76,8 @@ class Bridge:
         try:
             async with self.operation_lock:
                 await self.release()
+                self.lease = DeviceLease.acquire(serial)
+                self.serial = serial
                 self.status("connecting", "正在配对；请解锁 iPhone，并在手机上信任此电脑…")
                 await asyncio.wait_for(self.open_device(serial), 300)
                 self.status("ready", "设备已就绪。" + ("上次恢复尚未确认，请先恢复真实定位。" if self.uncertain or self.simulated else "连接本身不会改变位置。"))
@@ -104,9 +109,16 @@ class Bridge:
                 raise ValueError("请在 iPhone 设置 → 隐私与安全性中开启开发者模式，按提示重启后重新连接。")
         self.status("connecting", "正在建立开发连接…")
         rsd = await self.stack.enter_async_context(PreferredRsdTunnel(serial=serial))
+        try:
+            actual_serial = normalize_serial(getattr(rsd, "udid", None))
+        except ValueError:
+            raise ValueError("无法核对开发连接的设备身份，已停止连接。") from None
+        if actual_serial != normalize_serial(serial):
+            raise ValueError("开发连接的设备与所选 iPhone 不一致，已停止连接。")
         self.status("connecting", "正在准备开发镜像；首次可能需要从 Apple 下载，请保持联网…")
         try:
-            await auto_mount(rsd)
+            async with ddi_preparation_lease():
+                await auto_mount(rsd)
         except AlreadyMountedError:
             pass
         dvt = await self.stack.enter_async_context(DvtProvider(rsd))
@@ -130,20 +142,36 @@ class Bridge:
             self.status("disconnected", "连接已断开。若曾模拟位置，请重新连接后恢复真实定位，或重启 iPhone。")
 
     async def release(self, from_monitor=False):
-        if self.monitor and not from_monitor:
-            self.monitor.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self.monitor
-        self.monitor = None
+        monitor, self.monitor = self.monitor, None
+        stack, self.stack = self.stack, None
+        lease, self.lease = self.lease, None
         self.location = None
         self.lockdown = None
         self.serial = None
-        if self.stack:
-            stack, self.stack = self.stack, None
-            try:
-                await asyncio.wait_for(stack.aclose(), 8)
-            except Exception:
-                logging.exception("开发连接关闭失败")
+        try:
+            if monitor and not from_monitor:
+                monitor.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await monitor
+            # Keep ownership until any already-sent write/clear finishes and
+            # the transport is closed; another bridge must not overtake it.
+            async with self.device_lock:
+                if stack:
+                    try:
+                        await asyncio.wait_for(stack.aclose(), 8)
+                    except Exception:
+                        logging.exception("开发连接关闭失败")
+        finally:
+            if lease:
+                lease.release()
+
+    async def disconnect(self):
+        if self.connecting or self.replay:
+            raise ValueError("请先结束当前回放或等待连接完成。")
+        if self.simulated or self.uncertain or self.affected_serial:
+            raise ValueError("请先恢复真实定位，再断开设备。")
+        await self.release()
+        self.status("idle", "已断开设备连接，可选择另一台 iPhone。")
 
     async def cancel_replay(self):
         task, self.replay = self.replay, None
@@ -156,6 +184,8 @@ class Bridge:
         async with self.device_lock:
             if not self.location:
                 raise ConnectionError("设备尚未连接。")
+            if self.affected_serial and self.serial != self.affected_serial:
+                raise ConnectionError("当前设备与待恢复定位的设备不一致，请重连原设备。")
             # Mark before awaiting: a transport failure may occur after the device accepted the write.
             self.simulated = True
             self.uncertain = True
@@ -227,6 +257,8 @@ class Bridge:
         async with self.device_lock:
             if not self.location:
                 raise ConnectionError("设备未连接，无法发送恢复指令。")
+            if self.affected_serial and self.serial != self.affected_serial:
+                raise ConnectionError("当前设备与待恢复定位的设备不一致，未发送恢复指令。")
             await asyncio.wait_for(self.location.clear(), 8)
             self.simulated = False
             self.uncertain = False
@@ -255,6 +287,8 @@ class Bridge:
             self.status("playing", "已继续回放。")
         elif op == "stop":
             await self.stop()
+        elif op == "disconnect":
+            await self.disconnect()
         elif op == "restore":
             await self.cancel_replay()
             await self.clear_device()
@@ -286,8 +320,13 @@ class Bridge:
                     task.cancel()
                 if others:
                     await asyncio.gather(*others, return_exceptions=True)
-                await self.stop()
-                self.shutdown.set()
+                try:
+                    await self.stop()
+                finally:
+                    try:
+                        await self.release()
+                    finally:
+                        self.shutdown.set()
             else:
                 if self.connecting or self.operation_lock.locked():
                     raise ValueError("正在执行另一项操作，请稍候。")
@@ -333,17 +372,23 @@ class Bridge:
                 except Exception as exc:
                     self.emit("response", ok=False, message=str(exc))
         reader_task = asyncio.create_task(read_commands())
-        await self.shutdown.wait()
-        reader_task.cancel()
-        for task in list(self.operations):
-            task.cancel()
-        if self.operations:
-            await asyncio.gather(*self.operations, return_exceptions=True)
         try:
-            await self.stop()
-        except Exception:
-            self.emit("shutdown_warning", message="恢复定位未确认，请重连后恢复，或重启 iPhone。")
-        await self.release()
+            await self.shutdown.wait()
+        finally:
+            reader_task.cancel()
+            for task in list(self.operations):
+                task.cancel()
+            try:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await reader_task
+                if self.operations:
+                    await asyncio.gather(*self.operations, return_exceptions=True)
+                try:
+                    await self.stop()
+                except Exception:
+                    self.emit("shutdown_warning", message="恢复定位未确认，请重连后恢复，或重启 iPhone。")
+            finally:
+                await self.release()
 
 
 if __name__ == "__main__":

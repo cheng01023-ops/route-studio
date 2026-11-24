@@ -13,7 +13,7 @@ BUILD = pathlib.Path(os.environ.get('ROUTE_STUDIO_BUILD', str(ROOT / 'build'))).
 DEST = pathlib.Path(os.environ.get('ROUTE_STUDIO_OUTPUT', str(ROOT / 'dist'))).expanduser().resolve()
 # Keep the venv interpreter symlink path: resolving it can lose its environment.
 PYTHON = pathlib.Path(os.environ.get('ROUTE_STUDIO_PYTHON', str(BUILD / '.venv' / 'bin' / 'python'))).expanduser().absolute()
-APP = DEST / 'Route Studio.app'
+APP = DEST / 'Route Studio Dual.app'
 ICON = ROOT / 'Resources' / 'AppIcon.icns'
 
 if not ICON.is_file():
@@ -34,6 +34,8 @@ run('xcrun', 'swiftc', '-swift-version', '5', ROOT / 'Sources' / 'Models.swift',
 run(BUILD / 'models-tests')
 run('xcrun', 'swiftc', '-swift-version', '5', ROOT / 'Sources' / 'Models.swift', ROOT / 'Sources' / 'Coordinates.swift', ROOT / 'Sources' / 'StudioModel.swift', ROOT / 'tests' / 'StartupTests.swift', '-o', BUILD / 'startup-tests', '-framework', 'AppKit', '-framework', 'MapKit', '-framework', 'CoreLocation')
 run(BUILD / 'startup-tests')
+run('xcrun', 'swiftc', '-swift-version', '5', ROOT / 'Sources' / 'Models.swift', ROOT / 'Sources' / 'Coordinates.swift', ROOT / 'Sources' / 'StudioModel.swift', ROOT / 'Sources' / 'DualStudioModel.swift', ROOT / 'tests' / 'DualSessionTests.swift', '-o', BUILD / 'dual-session-tests', '-framework', 'AppKit', '-framework', 'MapKit', '-framework', 'CoreLocation')
+run(BUILD / 'dual-session-tests')
 run(PYTHON, '-m', 'PyInstaller', '--noconfirm', '--clean', '--name', 'RouteBridge', '--onedir',
     '--distpath', BUILD / 'dist', '--workpath', BUILD / 'pyinstaller', '--specpath', BUILD,
     '--recursive-copy-metadata', 'pymobiledevice3',
@@ -52,11 +54,11 @@ bridge = contents / 'Resources' / 'Bridge'
 if bridge.exists(): shutil.rmtree(bridge)
 shutil.copytree(BUILD / 'dist' / 'RouteBridge', bridge)
 run('xcrun', 'swiftc', '-swift-version', '5', '-O', '-parse-as-library', '-target', 'arm64-apple-macosx15.0',
-    *sorted((ROOT / 'Sources').glob('*.swift')), '-o', contents / 'MacOS' / 'RouteStudio',
+    *sorted((ROOT / 'Sources').glob('*.swift')), '-o', contents / 'MacOS' / 'RouteStudioDual',
     '-framework', 'SwiftUI', '-framework', 'AppKit', '-framework', 'MapKit', '-framework', 'CoreLocation')
 with (contents / 'Info.plist').open('wb') as f:
-    plistlib.dump(dict(CFBundleExecutable='RouteStudio', CFBundleIdentifier='local.codex.RouteStudio', CFBundleName='Route Studio',
-        CFBundleDisplayName='Route Studio', CFBundlePackageType='APPL', CFBundleIconFile='AppIcon', CFBundleShortVersionString='1.1.0', CFBundleVersion='2',
+    plistlib.dump(dict(CFBundleExecutable='RouteStudioDual', CFBundleIdentifier='local.codex.RouteStudioDual', CFBundleName='Route Studio Dual',
+        CFBundleDisplayName='Route Studio 双设备版', CFBundlePackageType='APPL', CFBundleIconFile='AppIcon', CFBundleShortVersionString='2.0.0', CFBundleVersion='1',
         LSMinimumSystemVersion='15.0', NSHighResolutionCapable=True, NSPrincipalClass='NSApplication',
         NSAppTransportSecurity={'NSAllowsLocalNetworking': True},
         NSLocalNetworkUsageDescription='通过 USB 开发连接与您选择的 iPhone 通信。'), f)
@@ -68,18 +70,18 @@ shutil.copytree(ROOT / 'Licenses', contents / 'Resources' / 'Licenses', dirs_exi
 sign_bundle(APP)
 run(contents / 'Resources' / 'Bridge' / 'RouteBridge', '--self-check')
 print('Built:', APP)
-launcher = DEST / '启动定位工具.app'
+launcher = DEST / '双设备定位工具.app'
 launcher_contents = launcher / 'Contents'
 (launcher_contents / 'MacOS').mkdir(parents=True, exist_ok=True)
 (launcher_contents / 'Resources').mkdir(parents=True, exist_ok=True)
 shutil.copy2(ICON, launcher_contents / 'Resources' / 'AppIcon.icns')
-run('xcrun', 'swiftc', '-swift-version', '5', '-O', '-parse-as-library', '-target', 'arm64-apple-macosx15.0', ROOT / 'tools' / 'Launcher.swift', '-o', launcher_contents / 'MacOS' / 'RouteStudioLauncher', '-framework', 'AppKit')
+run('xcrun', 'swiftc', '-swift-version', '5', '-O', '-parse-as-library', '-target', 'arm64-apple-macosx15.0', ROOT / 'tools' / 'Launcher.swift', '-o', launcher_contents / 'MacOS' / 'RouteStudioDualLauncher', '-framework', 'AppKit')
 with (launcher_contents / 'Info.plist').open('wb') as f:
-    plistlib.dump(dict(CFBundleExecutable='RouteStudioLauncher', CFBundleIdentifier='local.codex.RouteStudioLauncher',
-        CFBundleName='启动定位工具', CFBundleDisplayName='启动定位工具', CFBundlePackageType='APPL', CFBundleIconFile='AppIcon',
-        CFBundleShortVersionString='1.0.0', CFBundleVersion='1', LSMinimumSystemVersion='15.0',
+    plistlib.dump(dict(CFBundleExecutable='RouteStudioDualLauncher', CFBundleIdentifier='local.codex.RouteStudioDualLauncher',
+        CFBundleName='双设备定位工具', CFBundleDisplayName='双设备定位工具', CFBundlePackageType='APPL', CFBundleIconFile='AppIcon',
+        CFBundleShortVersionString='2.0.0', CFBundleVersion='1', LSMinimumSystemVersion='15.0',
         LSUIElement=True, NSHighResolutionCapable=True, NSPrincipalClass='NSApplication'), f)
 sign_bundle(launcher, deep=False)
-shutil.copyfile(ROOT / 'launch.command', DEST / '启动定位工具.command')
-(DEST / '启动定位工具.command').chmod(0o755)
+shutil.copyfile(ROOT / 'launch.command', DEST / '双设备定位工具.command')
+(DEST / '双设备定位工具.command').chmod(0o755)
 print('Built launcher:', launcher)

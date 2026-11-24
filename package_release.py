@@ -50,7 +50,7 @@ def make_source_zip(root, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(source_files(root)):
-            archive.write(path, Path('RouteStudio-source') / path.relative_to(root))
+            archive.write(path, Path('RouteStudio-Dual-source') / path.relative_to(root))
 
 
 def copy_file(source, destination):
@@ -63,7 +63,7 @@ def copy_file(source, destination):
 def make_release_zip(release, destination):
     with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for path in sorted(release.rglob('*')):
-            relative = Path('Route Studio') / path.relative_to(release)
+            relative = Path('Route Studio Dual') / path.relative_to(release)
             if path.is_symlink():
                 entry = zipfile.ZipInfo(str(relative))
                 entry.create_system = 3
@@ -77,13 +77,13 @@ def main():
     icon = ROOT / 'Resources' / 'AppIcon.icns'
     if not icon.is_file():
         raise FileNotFoundError(f'App icon resource is missing: {icon}')
-    bundle_names = ('Route Studio.app', '启动定位工具.app')
+    bundle_names = ('Route Studio Dual.app', '双设备定位工具.app')
     for name in bundle_names:
         if not (OUTPUT / name).is_dir():
             raise FileNotFoundError(f'Built app is missing: {OUTPUT / name}. Run python3 build.py first.')
     BUILD.mkdir(parents=True, exist_ok=True)
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    source_zip = OUTPUT / 'RouteStudio-source.zip'
+    source_zip = OUTPUT / 'RouteStudio-Dual-source.zip'
     make_source_zip(ROOT, source_zip)
 
     # A fresh staging directory avoids accidentally shipping stale local files.
@@ -109,8 +109,8 @@ def main():
         sign_bundle(launcher, deep=False)
         subprocess.run([str(app / 'Contents/Resources/Bridge/RouteBridge'), '--self-check'], check=True)
 
-        copy_file(ROOT / 'launch.command', release / '启动定位工具.command')
-        (release / '启动定位工具.command').chmod(0o755)
+        copy_file(ROOT / 'launch.command', release / '双设备定位工具.command')
+        (release / '双设备定位工具.command').chmod(0o755)
         copy_file(source_zip, release / source_zip.name)
         for name in ('README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.txt'):
             copy_file(ROOT / name, release / name)
@@ -126,7 +126,7 @@ def main():
                              (ROOT / 'Resources/ICON-DESIGN.txt', '图标设计说明.txt')):
             if source.is_file():
                 copy_file(source, release / name)
-        destination = OUTPUT / 'RouteStudio-Mac.zip'
+        destination = OUTPUT / 'RouteStudio-Dual-Mac.zip'
         make_release_zip(release, destination)
     with zipfile.ZipFile(destination) as archive:
         bad = archive.testzip()

@@ -10,6 +10,8 @@ import UniformTypeIdentifiers
     @Published var editMode = true
     @Published var devices: [DeviceInfo] = []
     @Published var selectedDevice = ""
+    @Published var connectedDeviceID = ""
+    @Published var affectedDeviceID = ""
     @Published var connected = false
     @Published var backendReady = false
     @Published var state = "idle"
@@ -43,6 +45,9 @@ import UniformTypeIdentifiers
     var termination: (() -> Void)?
     var activity: NSObjectProtocol?
     let preferences: UserDefaults
+    let automaticConnectionEnabled: Bool
+    let managedDeviceSelection: Bool
+    var operationGuard: ((String, [String: Any]) -> String?)?
     private var savesDraft = false
     private var deviceWatch: Task<Void, Never>?
     private var attemptedDevices = Set<String>()
@@ -50,7 +55,15 @@ import UniformTypeIdentifiers
 
     var active: Bool { ["playing", "paused"].contains(state) }
     var locked: Bool { active || commandBusy || state == "connecting" }
-    var canPlay: Bool { backendReady && !locked && route.points.count >= 2 && route.totalDistance >= 1 }
+    var canPlay: Bool { backendReady && !locked && route.points.count >= 2 && route.totalDistance >= 1 && (try? route.validated()) != nil }
+    var canChangeDevice: Bool { !locked && !simulated && !uncertain && state != "holding" }
+    var actualDeviceID: String { connectedDeviceID.isEmpty && connected && !managedDeviceSelection ? selectedDevice : connectedDeviceID }
+    var needsRestore: Bool { simulated || uncertain || (mode == "device" && (active || state == "holding")) }
+    var canConnectAssigned: Bool {
+        guard backendReady, !selectedDevice.isEmpty, !locked, !isQuitting else { return false }
+        if canChangeDevice { return true }
+        return !connected && !affectedDeviceID.isEmpty && selectedDevice == affectedDeviceID
+    }
     var selected: RoutePoint? { route.points.first { $0.id == selectedPoint } }
     var quickStartTitle: String {
         if state == "connecting" { return "正在连接 iPhone…" }
@@ -62,7 +75,7 @@ import UniformTypeIdentifiers
     }
     var canQuickStart: Bool {
         if active { return !commandBusy }
-        return canPlay && !uncertain && (connected || (devices.count == 1 && !selectedDevice.isEmpty))
+        return canPlay && !uncertain && ((connected && (!managedDeviceSelection || actualDeviceID == selectedDevice)) || (automaticConnectionEnabled && devices.count == 1 && !selectedDevice.isEmpty))
     }
     var statusTitle: String {
         switch state {
@@ -83,8 +96,10 @@ import UniformTypeIdentifiers
     func gpsCoordinate(_ coordinate: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
         (mainlandMap ? Coordinates.gcjToWGS(RoutePoint(coordinate)) : RoutePoint(coordinate)).coordinate
     }
-    init(startServices: Bool = true, preferences: UserDefaults = .standard, defaultRouteURL: URL? = nil) {
+    init(startServices: Bool = true, preferences: UserDefaults = .standard, defaultRouteURL: URL? = nil, automaticConnectionEnabled: Bool = true, managedDeviceSelection: Bool = false) {
         self.preferences = preferences
+        self.automaticConnectionEnabled = automaticConnectionEnabled
+        self.managedDeviceSelection = managedDeviceSelection
         if let saved = preferences.data(forKey: "routeDraftV1"), let restored = try? JSONDecoder().decode(RouteDocument.self, from: saved).validated() {
             route = restored
             message = "已载入上次路线，连接 iPhone 后点开始。"
@@ -116,7 +131,7 @@ import UniformTypeIdentifiers
     func maybeAutoConnect() {
         let present = Set(devices.map(\.id))
         attemptedDevices.formIntersection(present)
-        guard backendReady, !isQuitting, !connected, !locked, !simulated, !uncertain,
+        guard automaticConnectionEnabled, backendReady, !isQuitting, !connected, !locked, !simulated, !uncertain,
               devices.count == 1, let device = devices.first, !attemptedDevices.contains(device.id) else { return }
         selectedDevice = device.id
         connect()
@@ -158,13 +173,7 @@ import UniformTypeIdentifiers
         process.terminationHandler = { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.backendReady = false; self.connected = false; self.commandBusy = false
-                self.deviceWatch?.cancel()
-                if let finish = self.termination { self.termination = nil; finish(); return }
-                self.uncertain = self.uncertain || self.simulated
-                self.state = "error"; self.message = "定位组件已停止，请重新打开应用。若曾模拟位置，请检查手机定位。"
-                let callbacks = self.pending.values; self.pending.removeAll()
-                for callback in callbacks { callback(false, "定位组件已停止。") }
+                self.handleBackendTermination()
             }
         }
         do { try process.run(); self.process = process; input = stdin.fileHandleForWriting }
@@ -183,14 +192,18 @@ import UniformTypeIdentifiers
                     guard let id = x["id"] as? String else { return nil }
                     return DeviceInfo(id: id, name: x["name"] as? String ?? "iPhone", version: x["version"] as? String ?? "")
                 }
-                if !devices.contains(where: { $0.id == selectedDevice }) { selectedDevice = devices.first?.id ?? "" }
+                if !managedDeviceSelection && !devices.contains(where: { $0.id == selectedDevice }) { selectedDevice = devices.first?.id ?? "" }
                 if previousIDs != devices.map(\.id) { log(devices.isEmpty ? "等待 USB 连接" : "发现 \(devices.count) 台 USB 设备") }
                 maybeAutoConnect()
             case "status":
                 state = json["state"] as? String ?? state; mode = json["mode"] as? String ?? mode
                 connected = json["connected"] as? Bool ?? connected
+                if let serial = json["serial"] as? String { connectedDeviceID = serial }
+                else if !connected { connectedDeviceID = "" }
+                if let serial = json["affectedSerial"] as? String { affectedDeviceID = serial }
                 simulated = json["simulated"] as? Bool ?? simulated
                 uncertain = json["uncertain"] as? Bool ?? uncertain
+                if !simulated && !uncertain { affectedDeviceID = "" }
                 message = json["message"] as? String ?? message
                 if state == "disconnected" { attemptedDevices.remove(selectedDevice) }
                 if mode == "device", !simulated, !uncertain { currentPoint = nil }
@@ -213,11 +226,26 @@ import UniformTypeIdentifiers
         }
     }
     func send(_ command: String, values: [String: Any] = [:], busy: Bool = true, showError: Bool = true, completion: ((Bool, String?) -> Void)? = nil) {
-        guard backendReady, let input else { error = "定位组件尚未就绪。"; return }
+        guard backendReady, let input else {
+            let detail = "定位组件尚未就绪。"
+            if showError { error = detail }; completion?(false, detail); return
+        }
+        if let detail = operationGuard?(command, values) {
+            if showError { error = detail }; completion?(false, detail); return
+        }
         let id = UUID().uuidString
         var object = values; object["id"] = id; object["command"] = command
-        guard var data = try? JSONSerialization.data(withJSONObject: object) else { error = "命令参数无法编码。"; return }
+        guard var data = try? JSONSerialization.data(withJSONObject: object) else {
+            let detail = "命令参数无法编码。"; if showError { error = detail }; completion?(false, detail); return
+        }
         data.append(10)
+        let requiredDeviceRestore = needsRestore
+        let timeoutTarget = actualDeviceID
+        if command == "set" || (command == "start" && values["mode"] as? String == "device") {
+            // The phone may accept the first write before the bridge can publish a status.
+            uncertain = true
+            affectedDeviceID = actualDeviceID
+        }
         if busy { commandBusy = true }
         pending[id] = { [weak self] success, detail in
             if busy { self?.commandBusy = false }
@@ -225,7 +253,17 @@ import UniformTypeIdentifiers
             completion?(success, detail)
         }
         do { try input.write(contentsOf: data) }
-        catch { pending.removeValue(forKey: id); commandBusy = false; self.error = error.localizedDescription }
+        catch {
+            let callback = pending.removeValue(forKey: id)
+            if showError { self.error = error.localizedDescription }
+            callback?(false, error.localizedDescription)
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(command == "connect" ? 315 : (command == "quit" ? 30 : 20)))
+            guard let self, let callback = self.pending.removeValue(forKey: id) else { return }
+            self.markUnconfirmedTimeout(command, values: values, requiredDeviceRestore: requiredDeviceRestore, target: timeoutTarget)
+            callback(false, "操作等待超时，请检查设备连接；若曾模拟定位，请恢复真实定位。")
+        }
     }
     func scan(automatic: Bool = false) {
         guard backendReady, !scanning else { return }
@@ -233,11 +271,13 @@ import UniformTypeIdentifiers
         send("scan", busy: false, showError: !automatic) { [weak self] _, _ in self?.scanning = false }
     }
     func connect(startAfterConnecting: Bool = false) {
-        guard !selectedDevice.isEmpty, backendReady, !locked, !isQuitting else { return }
-        attemptedDevices.insert(selectedDevice)
-        send("connect", values: ["device": selectedDevice]) { [weak self] success, _ in
-            guard let self, success, startAfterConnecting, !self.isQuitting else { return }
-            self.play(preview: false)
+        guard canConnectAssigned else { return }
+        let target = selectedDevice
+        attemptedDevices.insert(target)
+        send("connect", values: ["device": target]) { [weak self] success, _ in
+            guard let self, success else { return }
+            self.connectedDeviceID = target
+            if startAfterConnecting && !self.isQuitting { self.play(preview: false) }
         }
     }
     func play(preview: Bool) {
@@ -304,28 +344,65 @@ import UniformTypeIdentifiers
             RoutePoint(latitude: 31.2310, longitude: 121.4720), RoutePoint(latitude: 31.2310, longitude: 121.4700)], closed: true)
         selectedPoint = nil; currentPoint = nil; fitRevision += 1
     }
-    func prepareQuit(_ finish: @escaping () -> Void) {
-        isQuitting = true
+    func markUnconfirmedTimeout(_ command: String, values: [String: Any], requiredDeviceRestore: Bool, target: String) {
+        let mayWriteDevice = command == "set" || (command == "start" && values["mode"] as? String == "device")
+        let mayRestoreDevice = ["stop", "restore"].contains(command) && requiredDeviceRestore
+        guard mayWriteDevice || mayRestoreDevice else { return }
+        uncertain = true
+        if affectedDeviceID.isEmpty { affectedDeviceID = target }
+    }
+    func handleBackendTermination() {
+        backendReady = false; connected = false; commandBusy = false
+        if (simulated || uncertain) && affectedDeviceID.isEmpty { affectedDeviceID = actualDeviceID }
+        connectedDeviceID = ""
         deviceWatch?.cancel()
-        guard process?.isRunning == true else { finish(); return }
-        termination = finish
-        send("quit") { [weak self] success, detail in
-            guard !success, let self else { return }
-            self.termination = nil
-            let alert = NSAlert(); alert.messageText = "尚未确认恢复真实定位"; alert.informativeText = detail ?? "请检查 USB 连接。"
-            alert.addButton(withTitle: "返回应用"); alert.addButton(withTitle: "退出并手动处理")
-            if alert.runModal() == .alertSecondButtonReturn {
-                self.process?.terminate(); finish()
-            } else { self.isQuitting = false; self.startDeviceWatch(); NSApp.reply(toApplicationShouldTerminate: false) }
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(15))
-            guard let self, self.termination != nil else { return }
-            self.termination = nil
-            let alert = NSAlert(); alert.messageText = "退出等待超时"; alert.informativeText = "若 iPhone 曾使用模拟定位，请重新连接后恢复定位，或重启手机。"
-            alert.addButton(withTitle: "返回应用"); alert.addButton(withTitle: "强制退出")
-            if alert.runModal() == .alertSecondButtonReturn { self.process?.terminate(); finish() }
-            else { self.isQuitting = false; self.startDeviceWatch(); NSApp.reply(toApplicationShouldTerminate: false) }
+        if let activity { ProcessInfo.processInfo.endActivity(activity); self.activity = nil }
+        uncertain = uncertain || simulated
+        let callbacks = Array(pending.values); pending.removeAll()
+        for callback in callbacks { callback(false, "定位组件已停止。") }
+        if !isQuitting {
+            state = "error"; message = "定位组件已停止，请重新打开应用。若曾模拟位置，请检查手机定位。"
         }
     }
+    func request(_ command: String, values: [String: Any] = [:]) async -> (Bool, String?) {
+        await withCheckedContinuation { continuation in
+            send(command, values: values, showError: false) { ok, detail in
+                continuation.resume(returning: (ok, detail))
+            }
+        }
+    }
+    func connectAssigned() async -> (Bool, String?) {
+        guard canConnectAssigned else {
+            return (false, "请为通道选择设备，并先结束回放、恢复定位。")
+        }
+        let target = selectedDevice
+        let result = await request("connect", values: ["device": target])
+        if result.0 { connectedDeviceID = target }
+        return result
+    }
+    func startAssigned() async -> (Bool, String?) {
+        guard canPlay, connected, !uncertain, actualDeviceID == selectedDevice else {
+            return (false, "设备、实际连接目标或路线尚未就绪。")
+        }
+        elapsed = 0; travelled = 0; playbackDuration = route.duration; playbackDistance = route.totalDistance
+        return await request("start", values: ["mode": "device", "route": route.payload])
+    }
+    func quiesceForQuit() {
+        isQuitting = true; deviceWatch?.cancel()
+    }
+    func resumeAfterCancelledQuit() {
+        isQuitting = false
+        if backendReady { startDeviceWatch() }
+    }
+    func restoreForQuit() async -> (Bool, String?) {
+        guard backendReady && input != nil else {
+            return needsRestore ? (false, "定位组件未运行，无法确认恢复定位。") : (true, nil)
+        }
+        return await request("stop")
+    }
+    func quitBackend() async -> (Bool, String?) {
+        guard backendReady && input != nil else { return (true, nil) }
+        return await request("quit")
+    }
+    func forceTerminateBackend() { process?.terminate() }
 }

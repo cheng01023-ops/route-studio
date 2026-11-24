@@ -2,10 +2,10 @@ import SwiftUI
 import AppKit
 
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
-    static var model: StudioModel?
+    static var model: DualStudioModel?
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model = Self.model else { return .terminateNow }
-        model.prepareQuit { NSApp.reply(toApplicationShouldTerminate: true) }
+        model.prepareQuit { allowed in NSApp.reply(toApplicationShouldTerminate: allowed) }
         return .terminateLater
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -14,19 +14,21 @@ import AppKit
 
 @main struct RouteStudioApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @StateObject private var model = StudioModel()
+    @StateObject private var model = DualStudioModel()
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model).onAppear { AppDelegate.model = model }
+            DualContentView(model: model).onAppear { AppDelegate.model = model }
         }
-        .defaultSize(width: 1210, height: 870)
+        .defaultSize(width: 1300, height: 930)
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("导入路线…") { model.importRoute() }.keyboardShortcut("o").disabled(model.locked)
-                Button("保存路线…") { model.exportRoute(gpx: false) }.keyboardShortcut("s").disabled(model.route.points.isEmpty)
+                Button("导入当前通道路线…") { model.current.importRoute() }.keyboardShortcut("o").disabled(model.current.locked || model.batchBusy)
+                Button("保存当前通道路线…") { model.current.exportRoute(gpx: false) }.keyboardShortcut("s").disabled(model.current.route.points.isEmpty)
             }
-            CommandGroup(replacing: .undoRedo) { Button("撤销路线修改") { model.undo() }.keyboardShortcut("z").disabled(model.undoStack.isEmpty || model.locked) }
+            CommandGroup(replacing: .undoRedo) {
+                Button("撤销当前通道路线修改") { model.current.undo() }.keyboardShortcut("z").disabled(model.current.undoStack.isEmpty || model.current.locked || model.batchBusy)
+            }
         }
     }
 }

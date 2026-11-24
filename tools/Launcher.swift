@@ -5,12 +5,12 @@ import Foundation
 /// sends device, route, location, or playback commands to Route Studio.
 @MainActor
 final class LauncherDelegate: NSObject, NSApplicationDelegate {
-    private let targetIdentifier = "local.codex.RouteStudio"
+    private let targetIdentifier = "local.codex.RouteStudioDual"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let applicationURL = Bundle.main.bundleURL
             .deletingLastPathComponent()
-            .appendingPathComponent("Route Studio.app", isDirectory: true)
+            .appendingPathComponent("Route Studio Dual.app", isDirectory: true)
             .standardizedFileURL
             .resolvingSymlinksInPath()
 
@@ -18,7 +18,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate {
               bundle.bundleIdentifier == targetIdentifier,
               let executable = bundle.executableURL,
               FileManager.default.isExecutableFile(atPath: executable.path) else {
-            showError("未找到定位工具", detail: "请完整解压安装包，并把本入口和 Route Studio.app 放在同一文件夹。")
+            showError("未找到双设备定位工具", detail: "请完整解压安装包，并把本入口和 Route Studio Dual.app 放在同一文件夹。")
             return
         }
 

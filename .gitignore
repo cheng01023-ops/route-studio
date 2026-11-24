@@ -1,6 +1,8 @@
 # Local builds and distributable binaries
 /build/
 /dist/
+/work/
+/outputs/
 /.venv/
 /venv/
 *.app/

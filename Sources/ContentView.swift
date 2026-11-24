@@ -5,14 +5,14 @@ private let teal = Color(red: 0.02, green: 0.47, blue: 0.44)
 
 struct ContentView: View {
     @ObservedObject var model: StudioModel
+    var embeddedInDual = false
     @State private var latitude = ""
     @State private var longitude = ""
     @State private var showLog = false
     @State private var confirmClear = false
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            if !embeddedInDual { header; Divider() }
             quickStartBar
             Divider()
             HSplitView {
@@ -24,7 +24,7 @@ struct ContentView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .tint(teal)
-        .frame(minWidth: 1000, minHeight: 720)
+        .frame(minWidth: 1000, minHeight: embeddedInDual ? 570 : 720)
         .alert("操作提示", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("知道了") { model.error = nil } } message: { Text(model.error ?? "") }
         .confirmationDialog("清空这条路线？", isPresented: $confirmClear) { Button("清空路线", role: .destructive) { model.clear() } } message: { Text("可以通过撤销找回。") }
         .sheet(isPresented: $model.showSetup) { setupSheet }
@@ -43,7 +43,7 @@ struct ContentView: View {
                     .font(.system(size: 12, design: .monospaced)).foregroundStyle(teal)
                 Button("结束并恢复定位") { model.send("stop") }.disabled(model.commandBusy)
             } else {
-                Text(model.connected ? "USB 已就绪" : (model.state == "connecting" ? "正在准备设备…" : "接上 USB 后自动连接"))
+                Text(model.connected ? "USB 已就绪" : (model.state == "connecting" ? "正在准备设备…" : (embeddedInDual ? "请在上方为当前通道选择并连接设备" : "接上 USB 后自动连接")))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Button { model.quickStart() } label: {
@@ -127,8 +127,7 @@ struct ContentView: View {
     var sidebar: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                deviceSection
-                Divider()
+                if !embeddedInDual { deviceSection; Divider() }
                 routeSection
                 Divider()
                 paceSection
@@ -250,7 +249,7 @@ struct ContentView: View {
                 }.buttonStyle(.bordered)
             } else {
                 Button { model.play(preview: false) } label: { Label("开始设备回放", systemImage: "play.fill").frame(maxWidth: .infinity).padding(.vertical, 4) }
-                    .buttonStyle(.borderedProminent).disabled(!model.canPlay || !model.connected)
+                    .buttonStyle(.borderedProminent).disabled(!model.canPlay || !model.connected || model.actualDeviceID != model.selectedDevice || model.uncertain)
                 Button { model.play(preview: true) } label: { Label("离线预览路线", systemImage: "play.rectangle").frame(maxWidth: .infinity) }
                     .buttonStyle(.bordered).disabled(!model.canPlay || model.simulated || model.uncertain)
             }

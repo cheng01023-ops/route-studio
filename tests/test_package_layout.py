@@ -80,13 +80,13 @@ class PublicLayoutTests(unittest.TestCase):
                      'backend/__pycache__/cached.pyc', 'backend/.env', 'docs/验证记录.txt',
                      'docs/复旦智慧体育学生端操作说明.pdf', 'private-record.txt'):
             self.write(name, 'LOCAL-ONLY')
-        destination = self.root / 'dist' / 'RouteStudio-source.zip'
+        destination = self.root / 'dist' / 'RouteStudio-Dual-source.zip'
         packaging.make_source_zip(self.root, destination)
         with zipfile.ZipFile(destination) as archive:
             names = set(archive.namelist())
-            self.assertIn('RouteStudio-source/Sources/App.swift', names)
-            self.assertIn('RouteStudio-source/docs/user-guide.md', names)
-            self.assertIn('RouteStudio-source/.github/workflows/check.yml', names)
+            self.assertIn('RouteStudio-Dual-source/Sources/App.swift', names)
+            self.assertIn('RouteStudio-Dual-source/docs/user-guide.md', names)
+            self.assertIn('RouteStudio-Dual-source/.github/workflows/check.yml', names)
             self.assertFalse(any(b'LOCAL-ONLY' in archive.read(name) for name in names))
             self.assertFalse(any('/dist/' in name or '/.git/' in name for name in names))
             self.assertIsNone(archive.testzip())
@@ -96,10 +96,10 @@ class PublicLayoutTests(unittest.TestCase):
         secret = self.write('outside.txt', 'external private data')
         (self.root / 'backend').mkdir()
         (self.root / 'backend' / 'secret.py').symlink_to(secret)
-        destination = self.root / 'dist' / 'RouteStudio-source.zip'
+        destination = self.root / 'dist' / 'RouteStudio-Dual-source.zip'
         packaging.make_source_zip(self.root, destination)
         with zipfile.ZipFile(destination) as archive:
-            self.assertNotIn('RouteStudio-source/backend/secret.py', archive.namelist())
+            self.assertNotIn('RouteStudio-Dual-source/backend/secret.py', archive.namelist())
 
     def test_sample_generator_writes_checkout_examples(self):
         for name in ('tools/generate_test_route.py', 'backend/route_engine.py', 'backend/coordinates.py'):
@@ -124,7 +124,7 @@ class PublicLayoutTests(unittest.TestCase):
         self.write('examples/route.json', '{}')
         self.write('build/release/验证记录.txt', 'old private session')
         output = self.root / 'dist'
-        for name in ('Route Studio.app', '启动定位工具.app'):
+        for name in ('Route Studio Dual.app', '双设备定位工具.app'):
             info = self.write('dist/' + name + '/Contents/Info.plist')
             info.write_bytes(plistlib.dumps({'CFBundleExecutable': 'fixture'}))
         with patch.object(packaging, 'ROOT', self.root), \
@@ -134,10 +134,10 @@ class PublicLayoutTests(unittest.TestCase):
              patch.object(packaging.subprocess, 'run'):
             packaging.main()
         self.assertEqual(sign.call_count, 2)
-        with zipfile.ZipFile(output / 'RouteStudio-Mac.zip') as archive:
-            self.assertIn('Route Studio/docs/user-guide.md', archive.namelist())
-            self.assertIn('Route Studio/examples/route.json', archive.namelist())
-            self.assertIn('Route Studio/RouteStudio-source.zip', archive.namelist())
+        with zipfile.ZipFile(output / 'RouteStudio-Dual-Mac.zip') as archive:
+            self.assertIn('Route Studio Dual/docs/user-guide.md', archive.namelist())
+            self.assertIn('Route Studio Dual/examples/route.json', archive.namelist())
+            self.assertIn('Route Studio Dual/RouteStudio-Dual-source.zip', archive.namelist())
             self.assertFalse(any('验证记录' in name for name in archive.namelist()))
         self.assertFalse(list((self.root / 'build').glob('release-*')))
 
